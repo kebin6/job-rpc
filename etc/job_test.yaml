@@ -1,0 +1,52 @@
+Name: job.rpc
+ListenOn: 0.0.0.0:9105
+
+DatabaseConf:
+  Type: mysql
+  Host: mysql
+  Port: 3306
+  DBName: solamb
+  Username: solamb
+  Password: 8KbDVUAr5J#b
+  MaxOpenConn: 100
+  SSLMode: disable
+  CacheTime: 5
+
+RedisConf:
+  Db: 0
+  Host: redis:6379
+  Pass: ewYGaN@9uXKP
+
+Log:
+  ServiceName: jobRpcLogger
+  Mode: file
+  Path: /home/data/logs
+  Encoding: json
+  Level: info
+  Compress: false
+  KeepDays: 7
+  StackCoolDownMillis: 100
+
+Prometheus:
+  Host: 0.0.0.0
+  Port: 4005
+  Path: /metrics
+
+AsynqConf:
+# if you do not use WithRedisConf, you should uncomment the configuration below
+
+#  Addr: localhost:6379  # Redis address
+#  Pass: # Redis Password
+#  DB: 0 # Redis database index
+#  Concurrency: 20 # max concurrent process job task num
+#  SyncInterval: 10 # seconds, this field specifies how often sync should happen
+  Enable: true
+
+TaskConf:
+  EnableScheduledTask: false
+  EnableDPTask: true
+
+WolfLampRpc:
+  Endpoints:
+    - solamb-rpc:7002
+  Enabled: true

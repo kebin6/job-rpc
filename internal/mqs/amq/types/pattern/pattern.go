@@ -2,3 +2,6 @@
 package pattern
 
 const RecordHelloWorld = "hello_world"
+
+// ProcessGame processing game data
+const ProcessGame = "process_game"

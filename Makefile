@@ -30,6 +30,12 @@ ENT_FEATURE=sql/execquery
 # The arch of the build | 构建的架构
 GOARCH=amd64
 
+DOCKER_NAMESPACES=kebin6
+DOCKER_USERNAME=hebinliu6@gmail.com
+DOCKER_PASSWORD=Yrs.5207788
+REPO=hub.docker.com
+DOCKER_PLATFORM=linux/amd64
+
 # ---- You may not need to modify the codes below | 下面的代码大概率不需要更改 ----
 
 GO ?= go
@@ -55,13 +61,13 @@ tools: # Install the necessary tools | 安装必要的工具
 
 .PHONY: docker
 docker: # Build the docker image | 构建 docker 镜像
-	docker build -f Dockerfile -t ${DOCKER_USERNAME}/$(SERVICE_DASH)-$(PROJECT_BUILD_SUFFIX):${VERSION} .
+	docker build --platform=$(DOCKER_PLATFORM) -f Dockerfile -t ${DOCKER_NAMESPACES}/$(SERVICE_DASH)-$(PROJECT_BUILD_SUFFIX):${VERSION} .
 	@echo "Build docker successfully"
 
 .PHONY: publish-docker
 publish-docker: # Publish docker image | 发布 docker 镜像
-	echo "${DOCKER_PASSWORD}" | docker login --username ${DOCKER_USERNAME} --password-stdin https://${REPO}
-	docker push ${DOCKER_USERNAME}/$(SERVICE_DASH)-$(PROJECT_BUILD_SUFFIX):${VERSION}
+	echo "${DOCKER_PASSWORD}" | docker login --username ${DOCKER_USERNAME} --password-stdin
+    	docker push ${DOCKER_NAMESPACES}/$(SERVICE_DASH)-$(PROJECT_BUILD_SUFFIX):${VERSION}
 	@echo "Publish docker successfully"
 
 .PHONY: gen-rpc
@@ -102,3 +108,9 @@ build-linux: # Build project for Linux | 构建Linux下的可执行文件
 .PHONY: help
 help: # Show help | 显示帮助
 	@grep -E '^[a-zA-Z0-9 -]+:.*#'  Makefile | sort | while read -r l; do printf "\033[1;32m$$(echo $$l | cut -f 1 -d':')\033[00m:$$(echo $$l | cut -f 2- -d'#')\n"; done
+
+.PHONY: deploy
+deploy:
+	make build-linux
+	make docker
+	make publish-docker

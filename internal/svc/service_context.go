@@ -16,12 +16,14 @@ package svc
 
 import (
 	"github.com/hibiken/asynq"
+	"github.com/kebin6/wolflamp-rpc/wolflampclient"
 	"github.com/redis/go-redis/v9"
-	"github.com/zeromicro/go-zero/core/logx"
-
 	"github.com/suyuan32/simple-admin-job/ent"
 	"github.com/suyuan32/simple-admin-job/internal/config"
 	"github.com/suyuan32/simple-admin-job/internal/mqs/amq/types/periodicconfig"
+	"github.com/zeromicro/go-zero/zrpc"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type ServiceContext struct {
@@ -31,6 +33,7 @@ type ServiceContext struct {
 	AsynqServer    *asynq.Server
 	AsynqScheduler *asynq.Scheduler
 	AsynqPTM       *asynq.PeriodicTaskManager
+	WolfLampRpc    wolflampclient.Wolflamp
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -46,5 +49,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AsynqScheduler: c.AsynqConf.NewScheduler(),
 		AsynqPTM:       c.AsynqConf.NewPeriodicTaskManager(periodicconfig.NewEntConfigProvider(db)),
 		Redis:          c.RedisConf.MustNewUniversalRedis(),
+		WolfLampRpc:    wolflampclient.NewWolflamp(zrpc.MustNewClient(c.WolfLampRpc)),
 	}
 }

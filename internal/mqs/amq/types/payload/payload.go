@@ -4,3 +4,8 @@ package payload
 type HelloWorldPayload struct {
 	Name string `json:"name"`
 }
+
+type ProcessGamePayload struct {
+	InvestTime int64 `json:"invest_time"` // 投注时长/秒
+	OpenTime   int64 `json:"open_time"`   // 开奖-结束时长/秒
+}

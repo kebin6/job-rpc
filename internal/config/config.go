@@ -13,6 +13,7 @@ type Config struct {
 	RedisConf    config.RedisConf
 	AsynqConf    asynq.AsynqConf
 	TaskConf     TaskConf
+	WolfLampRpc  zrpc.RpcClientConf
 }
 
 type TaskConf struct {
