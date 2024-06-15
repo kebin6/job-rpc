@@ -9,7 +9,7 @@ replace github.com/zeromicro/go-zero v1.6.5 => github.com/suyuan32/simple-admin-
 require (
 	entgo.io/ent v0.13.1
 	github.com/hibiken/asynq v0.24.1
-	github.com/kebin6/wolflamp-rpc v1.0.6
+	github.com/kebin6/wolflamp-rpc v1.0.7
 	github.com/redis/go-redis/v9 v9.5.2
 	github.com/suyuan32/simple-admin-common v1.4.4
 	github.com/zeromicro/go-zero v1.6.5

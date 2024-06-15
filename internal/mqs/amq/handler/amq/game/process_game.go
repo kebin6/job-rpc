@@ -82,10 +82,7 @@ func (l *ProcessGameHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	currentRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{})
 	// 游戏数据不存在则创建新一轮游戏
 	if err != nil {
-		l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRound.Val())
-		l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameLastRobotTime.Val())
-		l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRobotNum.Val())
-		l.svcCtx.Redis.Del(ctx, "current_game:opening_lock")
+		l.ClearCache(ctx)
 		return l.ProcessNew(ctx, currentRound)
 	}
 
@@ -107,16 +104,22 @@ func (l *ProcessGameHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 
 	// 判断缓存中的当前回合是否变化
 	if currentRound.EndAt < nowTime {
-		l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRound.Val())
-		l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameLastRobotTime.Val())
-		l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRobotNum.Val())
-		l.svcCtx.Redis.Del(ctx, "current_game:opening_lock")
+		l.ClearCache(ctx)
 		fmt.Println("new round start")
 		fmt.Println("")
 		return nil
 	}
 	return nil
 
+}
+
+// ClearCache 清除缓存
+func (l *ProcessGameHandler) ClearCache(ctx context.Context) {
+	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRound.Val())
+	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameLastRobotTime.Val())
+	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRobotNum.Val())
+	l.svcCtx.Redis.Del(ctx, "current_game:opening_lock")
+	l.svcCtx.Redis.Del(ctx, cachekey.PreviousSelectedLambFoldNo.Val())
 }
 
 // ProcessInvest 执行投注逻辑
