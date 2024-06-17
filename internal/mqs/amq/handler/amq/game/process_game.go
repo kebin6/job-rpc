@@ -15,6 +15,7 @@ import (
 	"github.com/suyuan32/simple-admin-job/internal/mqs/amq/types/payload"
 	"github.com/zeromicro/go-zero/core/errorx"
 	"github.com/zeromicro/go-zero/core/logx"
+	"google.golang.org/grpc/status"
 	"math/rand"
 	"time"
 
@@ -82,6 +83,9 @@ func (l *ProcessGameHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	currentRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{})
 	// 游戏数据不存在则创建新一轮游戏
 	if err != nil {
+		if status.Convert(err).Message() != "target does not exist" {
+			return err
+		}
 		l.ClearCache(ctx)
 		return l.ProcessNew(ctx, currentRound)
 	}
@@ -260,20 +264,31 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 
 	fmt.Println("ChooseLambFold")
 
+	// 记录当前回合没有投注的羊圈
+	lambFoldInvestInfo := [8]bool{false, false, false, false, false, false, false, false}
+	lambFoldInvested := make([]uint32, 0)
+	for _, fold := range round.Folds {
+		if fold.LambNum > 0 {
+			lambFoldInvestInfo[fold.FoldNo-1] = true
+			lambFoldInvested = append(lambFoldInvested, fold.FoldNo)
+		}
+	}
+
 	rand.Seed(time.Now().UnixNano())
 	// 随机选择10~30随机数，作为查询值
 	randNum := uint64(rand.Intn(20) + 10)
 	// 随机数作为历史回合数回溯各个羊圈的历史总盈亏
 	// 先获取当前回合的累计回合数
-	findRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{})
-	if err != nil {
-		return nil, err
-	}
+	//findRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{})
+	//if err != nil {
+	//	return nil, err
+	//}
+	findRound := round
 	if findRound.TotalRoundCount <= 1 {
 		// 如果当前是历史第一回合，则不需要聚合统计数据
 		rand.Seed(time.Now().UnixNano())
-		foldRand := rand.Intn(8)
-		choice := pointy.GetPointer(uint32(foldRand + 1))
+		foldRand := rand.Intn(len(lambFoldInvested))
+		choice := pointy.GetPointer(lambFoldInvested[foldRand])
 		return choice, nil
 	} else if findRound.TotalRoundCount <= randNum {
 		// 如果历史回合数小于随机数，则以历史回合数聚合统计
@@ -330,12 +345,28 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 		if i == excludeFirstOne || i == excludeSecondOne || i == excludeThirdOne {
 			continue
 		}
+		// 排除没有投注的羊圈
+		if !lambFoldInvestInfo[i] {
+			continue
+		}
+
 		if count == foldRand {
 			choice := pointy.GetPointer(uint32(i + 1))
 			return choice, nil
 		}
 		count++
 	}
-	return nil, nil
+	// 如果返回的羊圈是nil，则表示所有有投注的羊圈都被排除掉了，则从三个被排除的羊圈中按优先级返回
+	// 羊圈排除优先级: 盈亏数 > 胜率，所以会先返回优先级低的羊圈
+	if excludeFirstOne != -1 {
+		return pointy.GetPointer(uint32(excludeFirstOne)), nil
+	}
+	if excludeSecondOne != -1 {
+		return pointy.GetPointer(uint32(excludeSecondOne)), nil
+	}
+	if excludeFirstOne != -1 {
+		return pointy.GetPointer(uint32(excludeFirstOne)), nil
+	}
+	return nil, errorx.NewNotFoundError("no lamb fold to choose")
 
 }
