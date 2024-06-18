@@ -264,7 +264,7 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 
 	fmt.Println("ChooseLambFold")
 
-	// 记录当前回合没有投注的羊圈
+	// 统计当前回合没有投注的羊圈
 	lambFoldInvestInfo := [8]bool{false, false, false, false, false, false, false, false}
 	lambFoldInvested := make([]uint32, 0)
 	for _, fold := range round.Folds {
@@ -275,17 +275,12 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 	}
 
 	rand.Seed(time.Now().UnixNano())
-	// 随机选择10~30随机数，作为查询值
+	// 随机选择10~30随机数，作为查询值N
 	randNum := uint64(rand.Intn(20) + 10)
-	// 随机数作为历史回合数回溯各个羊圈的历史总盈亏
-	// 先获取当前回合的累计回合数
-	//findRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{})
-	//if err != nil {
-	//	return nil, err
-	//}
+	// 统计各个羊圈的历史N回合的总盈亏和平均胜率
 	findRound := round
 	if findRound.TotalRoundCount <= 1 {
-		// 如果当前是历史第一回合，则不需要聚合统计数据
+		// 如果当前是历史第一回合，则不需要聚合统计数据，直接在有投注的羊圈里随机抽选
 		rand.Seed(time.Now().UnixNano())
 		foldRand := rand.Intn(len(lambFoldInvested))
 		choice := pointy.GetPointer(lambFoldInvested[foldRand])
@@ -305,67 +300,82 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 	if err != nil {
 		return nil, err
 	}
-	// 最小的数
-	excludeFirstOne := -1
-	// 第二小的数
-	excludeSecondOne := -1
+	// 先排除掉没有投注的羊圈
+	aggregateExcludeResult := make(map[uint32]*wolflamp.LambFoldAggregateInfo)
+	for _, v := range aggregateResult.Data {
+		if lambFoldInvestInfo[v.LambFoldNo-1] {
+			aggregateExcludeResult[v.LambFoldNo] = v
+		}
+	}
+	if len(aggregateExcludeResult) < 1 {
+		return nil, errorx.NewNotFoundError("no lamb fold to choose")
+	}
+	// 只有一个有投注则直接返回
+	if len(aggregateExcludeResult) == 1 {
+		for _, v := range aggregateExcludeResult {
+			return pointy.GetPointer(v.LambFoldNo), nil
+		}
+	}
+
+	// 盈亏最小的羊圈编号
+	excludeFirstOne := uint32(0)
+	// 盈亏第二小的羊圈编号
+	excludeSecondOne := uint32(0)
 	// 盈亏数最小的2个羊圈优先排除
-	for i, v := range aggregateResult.Data {
-		if excludeFirstOne == -1 {
-			excludeFirstOne = i
-			excludeSecondOne = i
+	// 双变量遍历一次即可得出两个盈亏最小的羊圈索引值
+	for foldNo, v := range aggregateExcludeResult {
+		if excludeFirstOne == 0 {
+			excludeFirstOne = foldNo
+			excludeSecondOne = foldNo
 			continue
 		}
 		if v.ProfitAndLossCount < aggregateResult.Data[excludeFirstOne].ProfitAndLossCount {
 			excludeSecondOne = excludeFirstOne
-			excludeFirstOne = i
+			excludeFirstOne = foldNo
 		} else if v.ProfitAndLossCount < aggregateResult.Data[excludeSecondOne].ProfitAndLossCount {
-			excludeSecondOne = i
+			excludeSecondOne = foldNo
 		}
 	}
-	// 排除胜率最低的羊圈
-	excludeThirdOne := -1
-	for i, v := range aggregateResult.Data {
-		if i == excludeFirstOne || i == excludeSecondOne {
-			continue
+	// 如果只有两个羊圈有投注，则排除盈亏最小的那个羊圈
+	if len(aggregateExcludeResult) == 2 {
+		return &excludeSecondOne, nil
+	}
+	// 如果只有三个羊圈有投注，则排除盈亏最小的两个羊圈
+	if len(aggregateExcludeResult) == 3 {
+		for foldNo := range aggregateExcludeResult {
+			if foldNo == excludeFirstOne || foldNo == excludeSecondOne {
+				continue
+			}
+			return &foldNo, nil
 		}
-		if excludeThirdOne == -1 {
-			excludeThirdOne = i
+	}
+	// 排除盈亏最小的两个羊圈
+	delete(aggregateExcludeResult, excludeFirstOne)
+	delete(aggregateExcludeResult, excludeSecondOne)
+
+	// 排除胜率最低的羊圈
+	excludeThirdOne := uint32(0)
+	for foldNo, v := range aggregateExcludeResult {
+		if excludeThirdOne == 0 {
+			excludeThirdOne = foldNo
 			continue
 		}
 		if v.AvgWinRate < aggregateResult.Data[excludeThirdOne].AvgWinRate {
-			excludeThirdOne = i
+			excludeThirdOne = foldNo
 		}
 	}
-	// 在剩下5个羊圈中随机抽选
-	rand.Seed(time.Now().UnixNano())
-	foldRand := rand.Intn(5)
-	count := 0
-	for i := 0; i < 8; i++ {
-		if i == excludeFirstOne || i == excludeSecondOne || i == excludeThirdOne {
-			continue
-		}
-		// 排除没有投注的羊圈
-		if !lambFoldInvestInfo[i] {
-			continue
-		}
+	// 排除胜率最低的羊圈
+	delete(aggregateExcludeResult, excludeThirdOne)
 
+	// 在剩下的羊圈（至少1个）中随机抽选
+	rand.Seed(time.Now().UnixNano())
+	foldRand := rand.Intn(len(aggregateExcludeResult))
+	count := 0
+	for foldNo := range aggregateExcludeResult {
 		if count == foldRand {
-			choice := pointy.GetPointer(uint32(i + 1))
-			return choice, nil
+			return pointy.GetPointer(foldNo), nil
 		}
 		count++
-	}
-	// 如果返回的羊圈是nil，则表示所有有投注的羊圈都被排除掉了，则从三个被排除的羊圈中按优先级返回
-	// 羊圈排除优先级: 盈亏数 > 胜率，所以会先返回优先级低的羊圈
-	if excludeFirstOne != -1 {
-		return pointy.GetPointer(uint32(excludeFirstOne)), nil
-	}
-	if excludeSecondOne != -1 {
-		return pointy.GetPointer(uint32(excludeSecondOne)), nil
-	}
-	if excludeFirstOne != -1 {
-		return pointy.GetPointer(uint32(excludeFirstOne)), nil
 	}
 	return nil, errorx.NewNotFoundError("no lamb fold to choose")
 
