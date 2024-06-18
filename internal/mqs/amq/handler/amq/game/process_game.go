@@ -207,7 +207,7 @@ func (l *ProcessGameHandler) ProcessOpen(ctx context.Context, round *wolflamp.Ro
 
 	fmt.Println("ProcessOpen")
 
-	result, err := l.svcCtx.Redis.SetNX(ctx, "current_game:opening_lock", time.Now().Unix(), 0).Result()
+	result, err := l.svcCtx.Redis.SetNX(ctx, "current_game:opening_lock", time.Now().Unix(), time.Minute*3).Result()
 	if err != nil {
 		return err
 	}
@@ -329,10 +329,10 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 			excludeSecondOne = foldNo
 			continue
 		}
-		if v.ProfitAndLossCount < aggregateResult.Data[excludeFirstOne].ProfitAndLossCount {
+		if v.ProfitAndLossCount < aggregateExcludeResult[excludeFirstOne].ProfitAndLossCount {
 			excludeSecondOne = excludeFirstOne
 			excludeFirstOne = foldNo
-		} else if v.ProfitAndLossCount < aggregateResult.Data[excludeSecondOne].ProfitAndLossCount {
+		} else if v.ProfitAndLossCount < aggregateExcludeResult[excludeSecondOne].ProfitAndLossCount {
 			excludeSecondOne = foldNo
 		}
 	}
@@ -360,7 +360,7 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 			excludeThirdOne = foldNo
 			continue
 		}
-		if v.AvgWinRate < aggregateResult.Data[excludeThirdOne].AvgWinRate {
+		if v.AvgWinRate < aggregateExcludeResult[excludeThirdOne].AvgWinRate {
 			excludeThirdOne = foldNo
 		}
 	}
