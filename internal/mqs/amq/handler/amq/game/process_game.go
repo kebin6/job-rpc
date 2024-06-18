@@ -274,29 +274,8 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 		}
 	}
 
-	rand.Seed(time.Now().UnixNano())
-	// 随机选择10~30随机数，作为查询值N
-	randNum := uint64(rand.Intn(20) + 10)
-	// 统计各个羊圈的历史N回合的总盈亏和平均胜率
-	findRound := round
-	if findRound.TotalRoundCount <= 1 {
-		// 如果当前是历史第一回合，则不需要聚合统计数据，直接在有投注的羊圈里随机抽选
-		rand.Seed(time.Now().UnixNano())
-		foldRand := rand.Intn(len(lambFoldInvested))
-		choice := pointy.GetPointer(lambFoldInvested[foldRand])
-		return choice, nil
-	} else if findRound.TotalRoundCount <= randNum {
-		// 如果历史回合数小于随机数，则以历史回合数聚合统计
-		randNum = findRound.TotalRoundCount - 1
-	}
-
 	// 根据查询值获取羊圈统计数据
-	maxRoundCount := findRound.TotalRoundCount - 1
-	minRoundCount := maxRoundCount - randNum + 1
-	aggregateResult, err := l.svcCtx.WolfLampRpc.GetLambFoldAggregate(ctx, &wolflamp.GetLambFoldAggregateReq{
-		TotalRoundCountMin: minRoundCount,
-		TotalRoundCountMax: maxRoundCount,
-	})
+	aggregateResult, err := l.svcCtx.WolfLampRpc.GetLambFoldAggregateV2(ctx, &wolflamp.Empty{})
 	if err != nil {
 		return nil, err
 	}
