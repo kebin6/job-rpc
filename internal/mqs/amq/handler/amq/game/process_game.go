@@ -287,7 +287,8 @@ func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp
 		}
 	}
 	if len(aggregateExcludeResult) < 1 {
-		return nil, errorx.NewNotFoundError("no lamb fold to choose")
+		//return nil, errorx.NewNotFoundError("no lamb fold to choose")
+		return pointy.GetPointer(uint32(1)), nil
 	}
 	// 只有一个有投注则直接返回
 	if len(aggregateExcludeResult) == 1 {
