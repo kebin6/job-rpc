@@ -1,4 +1,4 @@
-package game
+package coingame
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"github.com/kebin6/wolflamp-rpc/common/enum/roundenum"
 	"github.com/kebin6/wolflamp-rpc/types/wolflamp"
 	"github.com/suyuan32/simple-admin-common/i18n"
-	"github.com/suyuan32/simple-admin-common/utils/pointy"
 	"github.com/suyuan32/simple-admin-job/ent/task"
 	"github.com/suyuan32/simple-admin-job/internal/mqs/amq/types/pattern"
 	"github.com/suyuan32/simple-admin-job/internal/mqs/amq/types/payload"
@@ -26,6 +25,7 @@ type ProcessGameHandler struct {
 	svcCtx  *svc.ServiceContext
 	taskId  uint64
 	payload payload.ProcessGamePayload
+	mode    string
 }
 
 // InvestPrepare invest prepare | 投注实体
@@ -49,7 +49,7 @@ type LambFoldAggregateInfo struct {
 }
 
 func NewProcessGameHandler(svcCtx *svc.ServiceContext) *ProcessGameHandler {
-	taskInfo, err := svcCtx.DB.Task.Query().Where(task.PatternEQ(pattern.ProcessGame)).First(context.Background())
+	taskInfo, err := svcCtx.DB.Task.Query().Where(task.PatternEQ(pattern.ProcessCoinGame)).First(context.Background())
 	if err != nil || taskInfo == nil {
 		return nil
 	}
@@ -66,6 +66,7 @@ func NewProcessGameHandler(svcCtx *svc.ServiceContext) *ProcessGameHandler {
 		svcCtx:  svcCtx,
 		taskId:  taskInfo.ID,
 		payload: p,
+		mode:    "coin",
 	}
 }
 
@@ -80,7 +81,7 @@ func (l *ProcessGameHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		return errorx.NewInternalError(i18n.DatabaseError)
 	}
 
-	currentRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{})
+	currentRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{Mode: l.mode})
 	// 游戏数据不存在则创建新一轮游戏
 	if err != nil {
 		if status.Convert(err).Message() != "game.roundNotFound" {
@@ -106,10 +107,10 @@ func (l *ProcessGameHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		return l.ProcessNew(ctx, currentRound)
 	}
 
-	// 判断缓存中的当前回合是否变化
+	// 清除缓存，开始新的一轮游戏
 	if currentRound.EndAt < nowTime {
 		l.ClearCache(ctx)
-		fmt.Println("new round start")
+		fmt.Printf("new round start[%s]\n", l.mode)
 		fmt.Println("")
 		return nil
 	}
@@ -119,53 +120,54 @@ func (l *ProcessGameHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 
 // ClearCache 清除缓存
 func (l *ProcessGameHandler) ClearCache(ctx context.Context) {
-	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRound.Val())
-	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameLastRobotTime.Val())
-	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRobotNum.Val())
-	l.svcCtx.Redis.Del(ctx, "current_game:opening_lock")
-	l.svcCtx.Redis.Del(ctx, cachekey.PreviousSelectedLambFoldNo.Val())
+	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRound.ModeVal(l.mode))
+	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameLastRobotTime.ModeVal(l.mode))
+	l.svcCtx.Redis.Del(ctx, cachekey.CurrentGameRobotNum.ModeVal(l.mode))
+	l.svcCtx.Redis.Del(ctx, fmt.Sprintf("current_game:%s_opening_lock", l.mode))
+	l.svcCtx.Redis.Del(ctx, cachekey.PreviousSelectedLambFoldNo.ModeVal(l.mode))
 }
 
 // ProcessInvest 执行投注逻辑
 func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.RoundInfo) error {
 
-	fmt.Println("ProcessInvest")
+	mode := l.mode
+	fmt.Printf("ProcessInvest[%s]:\n", mode)
 	nowTime := time.Now().Unix()
 	// 判断是否需要投入rob
 	// 空闲X秒开始投放rob
 	idleTime, err := l.svcCtx.WolfLampRpc.GetIdleTime(ctx, &wolflamp.Empty{})
 	if err != nil || idleTime.IdleTime == 0 {
-		fmt.Println("ProcessInvest: empty idleTime, exit")
+		fmt.Printf("ProcessInvest[%s]: empty idleTime, exit\n", mode)
 		return nil
 	}
 	// 投放rob数量
 	robNum, err := l.svcCtx.WolfLampRpc.GetRobotNum(ctx, &wolflamp.Empty{})
 	if err != nil || robNum.Max == 0 {
-		fmt.Println("ProcessInvest: empty robNum, exit")
+		fmt.Printf("ProcessInvest[%s]: empty robNum, exit\n", mode)
 		return nil
 	}
 	// 投放羊数量
 	lampNum, err := l.svcCtx.WolfLampRpc.GetRobotLampNum(ctx, &wolflamp.Empty{})
 	if err != nil || lampNum.Max == 0 {
-		fmt.Println("ProcessInvest: empty lampNum, exit")
+		fmt.Printf("ProcessInvest[%s]: empty lampNum, exit\n", mode)
 		return nil
 	}
 	// 判断投注人数有没有超过8人
-	investNum, err := l.svcCtx.Redis.Get(ctx, cachekey.CurrentGameRobotNum.Val()).Uint64()
+	investNum, err := l.svcCtx.Redis.Get(ctx, cachekey.CurrentGameRobotNum.ModeVal(mode)).Uint64()
 	if err != nil {
 		investNum = 0
 	}
 	if investNum >= 8 {
-		fmt.Println("ProcessInvest: investNum >= 8, exit")
+		fmt.Printf("ProcessInvest[%s]: investNum >= 8, exit\n", mode)
 		return nil
 	}
 	// 设置当上一轮结束，空闲【】秒，开始增加
-	lastTime, err := l.svcCtx.Redis.Get(ctx, cachekey.CurrentGameLastRobotTime.Val()).Int64()
+	lastTime, err := l.svcCtx.Redis.Get(ctx, cachekey.CurrentGameLastRobotTime.ModeVal(mode)).Int64()
 	if err != nil {
 		lastTime = 0
 	}
 	if (nowTime < int64(idleTime.IdleTime)+round.StartAt) || (nowTime < lastTime+int64(idleTime.IdleTime)) {
-		fmt.Println("ProcessInvest: idleTime not reached, exit")
+		fmt.Printf("ProcessInvest[%s]: idleTime not reached, exit\n", mode)
 		return nil
 	}
 	// 生成rob数量在robNum.Min~robNum.Max之间
@@ -189,14 +191,15 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 			RoundId:  v.RoundId,
 			LambNum:  v.LambNum,
 			FoldNo:   v.LambFoldNo,
+			Mode:     mode,
 		})
 		if err != nil {
 			return err
 		}
-		l.svcCtx.Redis.Incr(ctx, cachekey.CurrentGameRobotNum.Val())
-		fmt.Printf("ProcessInvest: RoundId=%d, PlayerId=%d, LambNum=%d, FoldNo=%d \n", v.RoundId, v.PlayerId, v.LambNum, v.LambFoldNo)
+		l.svcCtx.Redis.Incr(ctx, cachekey.CurrentGameRobotNum.ModeVal(mode))
+		fmt.Printf("ProcessInvest[%s]: RoundId=%d, PlayerId=%d, LambNum=%d, FoldNo=%d \n", mode, v.RoundId, v.PlayerId, v.LambNum, v.LambFoldNo)
 	}
-	l.svcCtx.Redis.Set(ctx, cachekey.CurrentGameLastRobotTime.Val(), time.Now().Unix(), 0)
+	l.svcCtx.Redis.Set(ctx, cachekey.CurrentGameLastRobotTime.ModeVal(mode), time.Now().Unix(), 0)
 	fmt.Println("")
 	return nil
 
@@ -205,30 +208,23 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 // ProcessOpen 执行开奖逻辑
 func (l *ProcessGameHandler) ProcessOpen(ctx context.Context, round *wolflamp.RoundInfo) error {
 
-	fmt.Println("ProcessOpen")
+	fmt.Printf("ProcessOpen[%s]\n", l.mode)
 
-	result, err := l.svcCtx.Redis.SetNX(ctx, "current_game:opening_lock", time.Now().Unix(), time.Minute*3).Result()
+	openLock := fmt.Sprintf("current_game:%s_opening_lock", l.mode)
+	result, err := l.svcCtx.Redis.SetNX(ctx, openLock, time.Now().Unix(), time.Minute*3).Result()
 	if err != nil {
 		return err
 	}
 	if !result {
-		fmt.Println("ProcessOpen: opening_lock already exists, exit")
+		fmt.Printf("ProcessOpen[%s]: %s_opening_lock already exists, exit\n", l.mode, l.mode)
 		return nil
 	}
-
-	// 抽选羊圈
-	foldChoice, err := l.ChooseLambFold(ctx, round)
-	if err != nil {
-		l.svcCtx.Redis.Del(ctx, "current_game:opening_lock")
-		return nil
-	}
-	fmt.Printf("ProcessOpen: ChooseLambFold: %d", *foldChoice)
 
 	// 被攻击的小羊按照其他羊圈用户投放的小羊数量占比进行分配
-	_, err = l.svcCtx.WolfLampRpc.DealOpenGame(ctx, &wolflamp.DealOpenGameReq{LambFoldNo: *foldChoice})
+	_, err = l.svcCtx.WolfLampRpc.DealOpenGame(ctx, &wolflamp.DealOpenGameReq{Mode: l.mode})
 
 	if err != nil {
-		l.svcCtx.Redis.Del(ctx, "current_game:opening_lock")
+		l.svcCtx.Redis.Del(ctx, openLock)
 		return err
 	}
 
@@ -240,7 +236,7 @@ func (l *ProcessGameHandler) ProcessOpen(ctx context.Context, round *wolflamp.Ro
 // ProcessNew 创建新一轮游戏
 func (l *ProcessGameHandler) ProcessNew(ctx context.Context, round *wolflamp.RoundInfo) error {
 
-	fmt.Println("ProcessNew")
+	fmt.Printf("ProcessNew[%s]\n", l.mode)
 	nowTime := time.Now().Unix()
 	start := nowTime
 	if round != nil && round.EndAt > nowTime {
@@ -249,114 +245,12 @@ func (l *ProcessGameHandler) ProcessNew(ctx context.Context, round *wolflamp.Rou
 	open := start + l.payload.InvestTime
 	end := open + l.payload.OpenTime
 	_, err := l.svcCtx.WolfLampRpc.CreateRound(ctx, &wolflamp.CreateRoundReq{
-		StartAt: start, OpenAt: open, EndAt: end,
+		StartAt: start, OpenAt: open, EndAt: end, Mode: l.mode,
 	})
 	if err != nil {
 		return err
 	}
 	fmt.Println("")
 	return nil
-
-}
-
-// ChooseLambFold 抽选羊圈
-func (l *ProcessGameHandler) ChooseLambFold(ctx context.Context, round *wolflamp.RoundInfo) (*uint32, error) {
-
-	fmt.Println("ChooseLambFold")
-
-	// 统计当前回合没有投注的羊圈
-	lambFoldInvestInfo := [8]bool{false, false, false, false, false, false, false, false}
-	lambFoldInvested := make([]uint32, 0)
-	for _, fold := range round.Folds {
-		if fold.LambNum > 0 {
-			lambFoldInvestInfo[fold.FoldNo-1] = true
-			lambFoldInvested = append(lambFoldInvested, fold.FoldNo)
-		}
-	}
-
-	// 根据查询值获取羊圈统计数据
-	aggregateResult, err := l.svcCtx.WolfLampRpc.GetLambFoldAggregateV2(ctx, &wolflamp.Empty{})
-	if err != nil {
-		return nil, err
-	}
-	// 先排除掉没有投注的羊圈
-	aggregateExcludeResult := make(map[uint32]*wolflamp.LambFoldAggregateInfo)
-	for _, v := range aggregateResult.Data {
-		if lambFoldInvestInfo[v.LambFoldNo-1] {
-			aggregateExcludeResult[v.LambFoldNo] = v
-		}
-	}
-	if len(aggregateExcludeResult) < 1 {
-		//return nil, errorx.NewNotFoundError("no lamb fold to choose")
-		return pointy.GetPointer(uint32(1)), nil
-	}
-	// 只有一个有投注则直接返回
-	if len(aggregateExcludeResult) == 1 {
-		for _, v := range aggregateExcludeResult {
-			return pointy.GetPointer(v.LambFoldNo), nil
-		}
-	}
-
-	// 盈亏最小的羊圈编号
-	excludeFirstOne := uint32(0)
-	// 盈亏第二小的羊圈编号
-	excludeSecondOne := uint32(0)
-	// 盈亏数最小的2个羊圈优先排除
-	// 双变量遍历一次即可得出两个盈亏最小的羊圈索引值
-	for foldNo, v := range aggregateExcludeResult {
-		if excludeFirstOne == 0 {
-			excludeFirstOne = foldNo
-			excludeSecondOne = foldNo
-			continue
-		}
-		if v.ProfitAndLossCount < aggregateExcludeResult[excludeFirstOne].ProfitAndLossCount {
-			excludeSecondOne = excludeFirstOne
-			excludeFirstOne = foldNo
-		} else if v.ProfitAndLossCount < aggregateExcludeResult[excludeSecondOne].ProfitAndLossCount {
-			excludeSecondOne = foldNo
-		}
-	}
-	// 如果只有两个羊圈有投注，则排除盈亏最小的那个羊圈
-	if len(aggregateExcludeResult) == 2 {
-		return &excludeSecondOne, nil
-	}
-	// 如果只有三个羊圈有投注，则排除盈亏最小的两个羊圈
-	if len(aggregateExcludeResult) == 3 {
-		for foldNo := range aggregateExcludeResult {
-			if foldNo == excludeFirstOne || foldNo == excludeSecondOne {
-				continue
-			}
-			return &foldNo, nil
-		}
-	}
-	// 排除盈亏最小的两个羊圈
-	delete(aggregateExcludeResult, excludeFirstOne)
-	delete(aggregateExcludeResult, excludeSecondOne)
-
-	// 排除胜率最低的羊圈
-	excludeThirdOne := uint32(0)
-	for foldNo, v := range aggregateExcludeResult {
-		if excludeThirdOne == 0 {
-			excludeThirdOne = foldNo
-			continue
-		}
-		if v.AvgWinRate < aggregateExcludeResult[excludeThirdOne].AvgWinRate {
-			excludeThirdOne = foldNo
-		}
-	}
-	// 排除胜率最低的羊圈
-	delete(aggregateExcludeResult, excludeThirdOne)
-
-	// 在剩下的羊圈（至少1个）中随机抽选
-	rand.Seed(time.Now().UnixNano())
-	foldRand := rand.Intn(len(aggregateExcludeResult))
-	count := 0
-	for foldNo := range aggregateExcludeResult {
-		if count == foldRand {
-			return pointy.GetPointer(foldNo), nil
-		}
-		count++
-	}
-	return nil, errorx.NewNotFoundError("no lamb fold to choose")
 
 }
