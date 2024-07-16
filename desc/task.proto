@@ -41,5 +41,4 @@ service Job {
   // group: task
   rpc deleteTask (IDsReq) returns (BaseResp);
 
-
 }
