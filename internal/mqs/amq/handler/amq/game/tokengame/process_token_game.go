@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/hibiken/asynq"
 	"github.com/kebin6/wolflamp-rpc/common/enum/cachekey"
+	"github.com/kebin6/wolflamp-rpc/common/enum/poolenum"
 	"github.com/kebin6/wolflamp-rpc/common/enum/roundenum"
 	"github.com/kebin6/wolflamp-rpc/types/wolflamp"
 	"github.com/suyuan32/simple-admin-common/i18n"
@@ -171,7 +172,7 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		return nil
 	}
 	// 获取剩余机器人池数量
-	robSumResp, err := l.svcCtx.WolfLampRpc.GetSum(ctx, &wolflamp.GetSumReq{Mode: mode})
+	robSumResp, err := l.svcCtx.WolfLampRpc.GetSum(ctx, &wolflamp.GetSumReq{Mode: mode, Status: 1, Type: uint32(poolenum.Robot)})
 	if err != nil {
 		return err
 	}
