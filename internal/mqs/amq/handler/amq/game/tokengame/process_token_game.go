@@ -50,7 +50,7 @@ type LambFoldAggregateInfo struct {
 }
 
 func NewProcessGameHandler(svcCtx *svc.ServiceContext) *ProcessGameHandler {
-	taskInfo, err := svcCtx.DB.Task.Query().Where(task.PatternEQ(pattern.ProcessTokenGame)).First(context.Background())
+	taskInfo, err := svcCtx.DB.Task.Query().Where(task.PatternEQ(pattern.ProcessCoinGame)).First(context.Background())
 	if err != nil || taskInfo == nil {
 		return nil
 	}
@@ -171,6 +171,7 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		fmt.Printf("ProcessInvest[%s]: idleTime not reached, exit\n", mode)
 		return nil
 	}
+
 	// 获取剩余机器人池数量
 	robSumResp, err := l.svcCtx.WolfLampRpc.GetSum(ctx, &wolflamp.GetSumReq{Mode: mode, Status: 1, Type: uint32(poolenum.Robot)})
 	if err != nil {
@@ -181,7 +182,6 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		return nil
 	}
 
-	robSum := robSumResp.Amount
 	// 生成rob数量在robNum.Min~robNum.Max之间
 	rand.Seed(time.Now().UnixNano())
 	robRand := rand.Intn(int(robNum.Max-robNum.Min+1)) + int(robNum.Min)
@@ -189,18 +189,22 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 	// 生成rob投羊数量
 	for i := 0; i < robRand; i++ {
 		// 生成羊数量在lampNum.Min~lampNum.Max之间
+		// 羊数量要是100的整数倍
 		rand.Seed(time.Now().UnixNano())
+		lampNum.Max = lampNum.Max / 100
+		lampNum.Min = lampNum.Min / 100
 		lampRand := rand.Intn(int(lampNum.Max-lampNum.Min+1)) + int(lampNum.Min)
-		if robSum < float64(lampRand) {
-			robSum -= float64(lampRand)
-		} else {
-			lampRand = int(robSum)
-			robSum -= float64(lampRand)
+		prepareItem := InvestPrepare{
+			LambNum:    uint32(lampRand) * 100,
+			LambFoldNo: uint32(rand.Intn(8) + 1),
+			PlayerId:   uint64(time.Now().UnixMilli()*10) + uint64(i),
+			RoundId:    round.Id,
 		}
-		prepare[i].LambNum = uint32(lampRand)
-		prepare[i].PlayerId = uint64(time.Now().UnixMilli()*10) + uint64(i)
-		prepare[i].RoundId = round.Id
-		prepare[i].LambFoldNo = uint32(rand.Intn(8) + 1)
+		if float64(prepareItem.LambNum) > robSumResp.Amount {
+			break
+		}
+		robSumResp.Amount -= float64(prepare[i].LambNum)
+		prepare[i] = prepareItem
 	}
 	// 创建投注记录
 	for _, v := range prepare {

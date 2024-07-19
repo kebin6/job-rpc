@@ -194,10 +194,17 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		lampNum.Max = lampNum.Max / 100
 		lampNum.Min = lampNum.Min / 100
 		lampRand := rand.Intn(int(lampNum.Max-lampNum.Min+1)) + int(lampNum.Min)
-		prepare[i].LambNum = uint32(lampRand) * 100
-		prepare[i].PlayerId = uint64(time.Now().UnixMilli()*10) + uint64(i)
-		prepare[i].RoundId = round.Id
-		prepare[i].LambFoldNo = uint32(rand.Intn(8) + 1)
+		prepareItem := InvestPrepare{
+			LambNum:    uint32(lampRand) * 100,
+			LambFoldNo: uint32(rand.Intn(8) + 1),
+			PlayerId:   uint64(time.Now().UnixMilli()*10) + uint64(i),
+			RoundId:    round.Id,
+		}
+		if float64(prepareItem.LambNum) > robSumResp.Amount {
+			break
+		}
+		robSumResp.Amount -= float64(prepare[i].LambNum)
+		prepare[i] = prepareItem
 	}
 	// 创建投注记录
 	for _, v := range prepare {
