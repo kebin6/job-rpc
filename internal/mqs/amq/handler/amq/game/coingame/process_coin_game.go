@@ -189,9 +189,12 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 	// 生成rob投羊数量
 	for i := 0; i < robRand; i++ {
 		// 生成羊数量在lampNum.Min~lampNum.Max之间
+		// 羊数量要是100的整数倍
 		rand.Seed(time.Now().UnixNano())
+		lampNum.Max = lampNum.Max / 100
+		lampNum.Min = lampNum.Min / 100
 		lampRand := rand.Intn(int(lampNum.Max-lampNum.Min+1)) + int(lampNum.Min)
-		prepare[i].LambNum = uint32(lampRand)
+		prepare[i].LambNum = uint32(lampRand) * 100
 		prepare[i].PlayerId = uint64(time.Now().UnixMilli()*10) + uint64(i)
 		prepare[i].RoundId = round.Id
 		prepare[i].LambFoldNo = uint32(rand.Intn(8) + 1)
