@@ -85,7 +85,7 @@ func (l *ProcessGameHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	currentRound, err := l.svcCtx.WolfLampRpc.FindRound(ctx, &wolflamp.FindRoundReq{Mode: l.mode})
 	// 游戏数据不存在则创建新一轮游戏
 	if err != nil {
-		if status.Convert(err).Message() != "game.roundNotFound" {
+		if status.Convert(err).Message() != "target does not exist" {
 			return err
 		}
 		l.ClearCache(ctx)
