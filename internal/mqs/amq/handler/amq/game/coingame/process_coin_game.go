@@ -134,22 +134,36 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 	mode := l.mode
 	fmt.Printf("ProcessInvest[%s]:\n", mode)
 	nowTime := time.Now().Unix()
+
+	investLock := cachekey.CurrentGameInvestLock.ModeVal(mode)
+	result, err := l.svcCtx.Redis.SetNX(ctx, investLock, time.Now().Unix(), time.Minute*1).Result()
+	if err != nil {
+		return err
+	}
+	if !result {
+		fmt.Printf("ProcessInvest[%s]: %s already exists, exit\n", l.mode, investLock)
+		return nil
+	}
+
 	// 判断是否需要投入rob
 	// 空闲X秒开始投放rob
 	idleTime, err := l.svcCtx.WolfLampRpc.GetIdleTime(ctx, &wolflamp.Empty{})
 	if err != nil || idleTime.IdleTime == 0 {
+		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: empty idleTime, exit\n", mode)
 		return nil
 	}
 	// 投放rob数量
 	robNum, err := l.svcCtx.WolfLampRpc.GetRobotNum(ctx, &wolflamp.Empty{})
 	if err != nil || robNum.Max == 0 {
+		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: empty robNum, exit\n", mode)
 		return nil
 	}
 	// 投放羊数量
 	lampNum, err := l.svcCtx.WolfLampRpc.GetRobotLampNum(ctx, &wolflamp.Empty{})
 	if err != nil || lampNum.Max == 0 {
+		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: empty lampNum, exit\n", mode)
 		return nil
 	}
@@ -159,6 +173,7 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		investNum = 0
 	}
 	if investNum >= 8 {
+		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: investNum >= 8, exit\n", mode)
 		return nil
 	}
@@ -168,6 +183,7 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		lastTime = 0
 	}
 	if (nowTime < int64(idleTime.IdleTime)+round.StartAt) || (nowTime < lastTime+int64(idleTime.IdleTime)) {
+		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: idleTime not reached, exit\n", mode)
 		return nil
 	}
@@ -178,6 +194,7 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		return err
 	}
 	if robSumResp.Amount <= 0 {
+		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: robot pool is not enough, exit\n", mode)
 		return nil
 	}
@@ -219,12 +236,14 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 			Mode:     mode,
 		})
 		if err != nil {
+			l.svcCtx.Redis.Del(ctx, investLock)
 			return err
 		}
 		l.svcCtx.Redis.Incr(ctx, cachekey.CurrentGameRobotNum.ModeVal(mode))
 		fmt.Printf("ProcessInvest[%s]: RoundId=%d, PlayerId=%d, LambNum=%d, FoldNo=%d \n", mode, v.RoundId, v.PlayerId, v.LambNum, v.LambFoldNo)
 	}
 	l.svcCtx.Redis.Set(ctx, cachekey.CurrentGameLastRobotTime.ModeVal(mode), time.Now().Unix(), 0)
+	l.svcCtx.Redis.Del(ctx, investLock)
 	fmt.Println("")
 	return nil
 
