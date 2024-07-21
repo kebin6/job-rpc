@@ -208,6 +208,9 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 	}
 	// 创建投注记录
 	for _, v := range prepare {
+		if v.PlayerId == 0 {
+			continue
+		}
 		_, err := l.svcCtx.WolfLampRpc.Invest(ctx, &wolflamp.CreateInvestReq{
 			PlayerId: v.PlayerId,
 			RoundId:  v.RoundId,
