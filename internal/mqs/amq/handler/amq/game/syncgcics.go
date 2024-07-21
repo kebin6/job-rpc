@@ -1,4 +1,4 @@
-package coingame
+package game
 
 import (
 	"context"
