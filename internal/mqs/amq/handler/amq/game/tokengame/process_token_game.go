@@ -2,6 +2,7 @@ package tokengame
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"github.com/hibiken/asynq"
@@ -16,7 +17,8 @@ import (
 	"github.com/zeromicro/go-zero/core/errorx"
 	"github.com/zeromicro/go-zero/core/logx"
 	"google.golang.org/grpc/status"
-	"math/rand"
+	"math/big"
+	"sort"
 	"time"
 
 	"github.com/suyuan32/simple-admin-job/internal/svc"
@@ -145,25 +147,25 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		return nil
 	}
 
+	defer func() {
+		l.svcCtx.Redis.Del(ctx, investLock)
+	}()
 	// 判断是否需要投入rob
 	// 空闲X秒开始投放rob
 	idleTime, err := l.svcCtx.WolfLampRpc.GetIdleTime(ctx, &wolflamp.Empty{})
 	if err != nil || idleTime.IdleTime == 0 {
-		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: empty idleTime, exit\n", mode)
 		return nil
 	}
 	// 投放rob数量
 	robNum, err := l.svcCtx.WolfLampRpc.GetRobotNum(ctx, &wolflamp.Empty{})
 	if err != nil || robNum.Max == 0 {
-		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: empty robNum, exit\n", mode)
 		return nil
 	}
 	// 投放羊数量
 	lampNum, err := l.svcCtx.WolfLampRpc.GetRobotLampNum(ctx, &wolflamp.Empty{})
 	if err != nil || lampNum.Max == 0 {
-		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: empty lampNum, exit\n", mode)
 		return nil
 	}
@@ -173,7 +175,6 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		investNum = 0
 	}
 	if investNum >= 8 {
-		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: investNum >= 8, exit\n", mode)
 		return nil
 	}
@@ -183,7 +184,6 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		lastTime = 0
 	}
 	if (nowTime < int64(idleTime.IdleTime)+round.StartAt) || (nowTime < lastTime+int64(idleTime.IdleTime)) {
-		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: idleTime not reached, exit\n", mode)
 		return nil
 	}
@@ -194,34 +194,67 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 		return err
 	}
 	if robSumResp.Amount <= 0 {
-		l.svcCtx.Redis.Del(ctx, investLock)
 		fmt.Printf("ProcessInvest[%s]: robot pool is not enough, exit\n", mode)
 		return nil
 	}
 
 	// 生成rob数量在robNum.Min~robNum.Max之间
-	rand.Seed(time.Now().UnixNano())
-	robRand := rand.Intn(int(robNum.Max-robNum.Min+1)) + int(robNum.Min)
+	robRandNum, err := rand.Int(rand.Reader, big.NewInt(int64(robNum.Max-robNum.Min+1)))
+	if err != nil {
+		return err
+	}
+	robRand := robRandNum.Int64() + int64(robNum.Min)
 	prepare := make([]InvestPrepare, robRand)
-	lampNum.Max = lampNum.Max / 100
-	lampNum.Min = lampNum.Min / 100
+	allowInvestNumSet := []int{100, 300, 1000, 3000, 10000}
+	// 获取allowInvestNumSet中不小于robNum.Min的数值下标minIndex和不大于robNum.Max的数值下标maxIndex
+	minIndex := sort.SearchInts(allowInvestNumSet, int(lampNum.Min))
+	maxIndex := sort.SearchInts(allowInvestNumSet, int(lampNum.Max))
+	if int(lampNum.Max) < allowInvestNumSet[maxIndex] {
+		maxIndex -= 1
+	}
+
 	// 生成rob投羊数量
-	for i := 0; i < robRand; i++ {
-		// 生成羊数量在lampNum.Min~lampNum.Max之间
-		// 羊数量要是100的整数倍
-		rand.Seed(time.Now().UnixNano())
-		lampRand := rand.Intn(int(lampNum.Max-lampNum.Min+1)) + int(lampNum.Min)
-		prepareItem := InvestPrepare{
-			LambNum:    uint32(lampRand) * 100,
-			LambFoldNo: uint32(rand.Intn(8) + 1),
-			PlayerId:   uint64(time.Now().UnixMilli()*10) + uint64(i),
-			RoundId:    round.Id,
+	if minIndex <= maxIndex {
+		for i := 0; i < int(robRand); i++ {
+			if robSumResp.Amount < float64(allowInvestNumSet[minIndex]) {
+				fmt.Printf("ProcessInvest[%s]00: robot not enough: RoundId=%d, robSum=%f, minNum=%d\n", mode,
+					round.Id, robSumResp.Amount, allowInvestNumSet[minIndex])
+				continue
+			}
+			// 机器人池剩余量在allowInvestNumSet中所处位置下标
+			index := sort.SearchInts(allowInvestNumSet, int(robSumResp.Amount)) - 1
+			// 判断剩余量下标是否小于机器人投注最小下标，是则代表机器人池不足，跳过
+			if index < minIndex {
+				fmt.Printf("ProcessInvest[%s]11: robot not enough: RoundId=%d, robSum=%f, minNum=%d\n", mode,
+					round.Id, robSumResp.Amount, allowInvestNumSet[minIndex])
+				continue
+			}
+			// 判断剩余量下标是否小于机器人投注最大下标，是则代表机器人池不足，将最大下标替换为剩余量下标
+			if index < maxIndex {
+				maxIndex = index
+			}
+			// 生成羊数量在minIndex和maxIndex之间
+			randIndexBigInt, err := rand.Int(rand.Reader, big.NewInt(int64(maxIndex-minIndex+1)))
+			randIndex := randIndexBigInt.Int64() + int64(minIndex)
+			if err != nil {
+				return err
+			}
+			// 随机投注羊圈号
+			randLambFoldBigInt, err := rand.Int(rand.Reader, big.NewInt(int64(8)))
+			if err != nil {
+				return err
+			}
+			randLambFold := randLambFoldBigInt.Int64() + 1
+			randLambNum := allowInvestNumSet[randIndex]
+			prepareItem := InvestPrepare{
+				LambNum:    uint32(randLambNum),
+				LambFoldNo: uint32(randLambFold),
+				PlayerId:   uint64(time.Now().UnixMilli()*10) + uint64(i),
+				RoundId:    round.Id,
+			}
+			robSumResp.Amount -= float64(prepare[i].LambNum)
+			prepare[i] = prepareItem
 		}
-		if float64(prepareItem.LambNum) > robSumResp.Amount {
-			break
-		}
-		robSumResp.Amount -= float64(prepare[i].LambNum)
-		prepare[i] = prepareItem
 	}
 	// 创建投注记录
 	for _, v := range prepare {
@@ -236,14 +269,12 @@ func (l *ProcessGameHandler) ProcessInvest(ctx context.Context, round *wolflamp.
 			Mode:     mode,
 		})
 		if err != nil {
-			l.svcCtx.Redis.Del(ctx, investLock)
 			return err
 		}
 		l.svcCtx.Redis.Incr(ctx, cachekey.CurrentGameRobotNum.ModeVal(mode))
 		fmt.Printf("ProcessInvest[%s]: RoundId=%d, PlayerId=%d, LambNum=%d, FoldNo=%d \n", mode, v.RoundId, v.PlayerId, v.LambNum, v.LambFoldNo)
 	}
 	l.svcCtx.Redis.Set(ctx, cachekey.CurrentGameLastRobotTime.ModeVal(mode), time.Now().Unix(), 0)
-	l.svcCtx.Redis.Del(ctx, investLock)
 	fmt.Println("")
 	return nil
 

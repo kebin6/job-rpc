@@ -49,7 +49,7 @@ func (e *EntConfigProvider) GetConfigs() ([]*asynq.PeriodicTaskConfig, error) {
 	for _, v := range configData {
 		result = append(result, &asynq.PeriodicTaskConfig{
 			Cronspec: v.CronExpression,
-			Task:     asynq.NewTask(v.Pattern, []byte(v.Payload)),
+			Task:     asynq.NewTask(v.Pattern, []byte(v.Payload), asynq.MaxRetry(0)),
 			Opts:     nil,
 		})
 	}
